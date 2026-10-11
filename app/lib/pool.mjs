@@ -76,6 +76,7 @@ export class Pool {
     this.oauthSessions = new Map();
     this.unclaimed = [];
     this.completing = Promise.resolve(); // serializes OAuth completions
+    this.disputed = new Map(); // auth_index -> time two sign-ins collided over it
   }
 
   ws(id) {
@@ -162,8 +163,10 @@ export class Pool {
         continue;
       }
       if (a.removed_at) {
-        // A plan removed from its workspace must not keep serving traffic; retry the delete until the file is gone.
-        await this.cpa.deleteCredential(f.name).catch(() => {});
+        // A plan removed from its workspace must not keep serving traffic; retry the delete until the
+        // file is gone. A file newer than the removal is a fresh sign-in (possibly for another workspace).
+        const written = Date.parse(f.modtime || f.updated_at || '');
+        if (!(written > a.removed_at)) await this.cpa.deleteCredential(f.name).catch(() => {});
         continue;
       }
       const signals = f.quota && f.quota.signals ? lowerKeys(f.quota.signals) : null;
@@ -257,18 +260,25 @@ export class Pool {
     const owned = (f) => this.db.prepare('SELECT * FROM accounts WHERE auth_index = ?').get(f.auth_index);
 
     // Re-logins to plans that already belong somewhere are reported, never moved.
-    const candidates = [];
+    let candidates = [];
     for (const f of [...fresh, ...modified]) {
       const existing = owned(f);
       if (existing && !existing.removed_at) (existing.workspace_id === s.workspaceId ? result.refreshed : result.conflicts).push(info(f));
       else candidates.push(f);
     }
-    // Another sign-in for the same provider was in flight: we can't tell whose file is whose.
+    // Files that two sign-ins collided over after this session began are off limits: both sides
+    // were told to reconnect, and only a reconnect (started after the dispute) may claim them.
+    const AMBIGUOUS = 'Another sign-in for the same provider finished at the same moment, so this one was not added. Please connect the plan again.';
+    const dropped = candidates.filter((f) => (this.disputed.get(f.auth_index) || 0) >= s.startedAt);
+    candidates = candidates.filter((f) => !dropped.includes(f));
     const othersPending = [...this.oauthSessions.values()].some((o) => o.provider === s.provider);
     if (candidates.length > 1 && othersPending) {
-      return { ...result, ambiguous: true, error: 'Another sign-in for the same provider finished at the same moment, so this one was not added. Please connect the plan again.' };
+      for (const f of candidates) this.disputed.set(f.auth_index, Date.now());
+      return { ...result, ambiguous: true, error: AMBIGUOUS };
     }
+    if (!candidates.length && dropped.length) return { ...result, ambiguous: true, error: AMBIGUOUS };
     for (const f of candidates) {
+      this.disputed.delete(f.auth_index);
       const existing = owned(f);
       if (existing) {
         this.db
@@ -428,6 +438,7 @@ export class Pool {
     loop(() => this.syncAll(), syncMs);
     setInterval(() => {
       for (const [k, s] of this.oauthSessions) if (Date.now() - s.startedAt > 15 * 60000) this.oauthSessions.delete(k);
+      for (const [k, t] of this.disputed) if (Date.now() - t > 15 * 60000) this.disputed.delete(k);
     }, 60000).unref();
   }
 }

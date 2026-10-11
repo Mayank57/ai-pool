@@ -616,6 +616,7 @@ function connectPlan(defaultVisibility, provider) {
             d.querySelector('#cbody').innerHTML = `${s.added.length ? `<div class="notice ok"><b>Connected.</b> Now in your pool as ${vis === 'private' ? 'a private plan' : 'a shared plan'}:<ul>${li(s.added)}</ul></div>` : ''}
               ${s.refreshed.length ? `<div class="notice info">Already in this workspace, so the sign-in was refreshed:<ul>${li(s.refreshed)}</ul></div>` : ''}
               ${s.conflicts.length ? `<div class="notice err">Already connected to another workspace on this server and not added here:<ul>${li(s.conflicts)}</ul></div>` : ''}
+              ${s.ambiguous ? `<div class="notice err">${esc(s.error)}</div>` : !s.added.length && !s.refreshed.length && !s.conflicts.length ? '<div class="notice">No new plan was detected. If you did sign in, close this and try connecting again.</div>' : ''}
               ${s.added.length ? '<p class="ink2 small">Next: set the plan type (Pro, Max…) on the Plans page so savings are calculated correctly.</p>' : ''}
               <div class="actions"><button class="btn primary" id="done">Done</button></div>`;
             d.querySelector('#done').onclick = () => {

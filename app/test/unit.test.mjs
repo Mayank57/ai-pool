@@ -117,3 +117,67 @@ test('limiter counts attempts per window and prunes', () => {
   assert.equal(l.buckets.has('old'), false);
   clearInterval(l.timer);
 });
+
+// Two sign-ins for the same provider finishing together must never claim each other's file.
+import { Pool } from '../lib/pool.mjs';
+
+function poolHarness() {
+  const db = openDb(':memory:');
+  db.prepare("INSERT INTO users (id, email, name, pw_hash, created_at) VALUES (1,'a@x','A','h',0),(2,'b@x','B','h',0)").run();
+  db.prepare("INSERT INTO workspaces (id, name, prefix, created_by, created_at, trial_ends_at) VALUES (1,'W1','wsaaa',1,0,9e15),(2,'W2','wsbbb',2,0,9e15)").run();
+  let files = [];
+  let n = 0;
+  const cpa = {
+    listCredentials: async () => files.map((f) => ({ ...f })),
+    startOAuth: async () => ({ url: 'https://example.test/login', state: 'st' + ++n }),
+    oauthStatus: async () => ({ status: 'ok' }),
+    patchCredential: async () => ({}),
+    deleteCredential: async () => ({}),
+  };
+  const pool = new Pool({ db, cpa, crypto: { encrypt: (x) => x, decrypt: (x) => x } });
+  const file = (idx, email, modtime) => ({ auth_index: idx, name: `claude-${email}.json`, provider: 'claude', email, modtime });
+  const owner = (idx) => db.prepare('SELECT workspace_id FROM accounts WHERE auth_index = ? AND removed_at IS NULL').get(idx)?.workspace_id ?? null;
+  return { db, pool, setFiles: (f) => (files = f), file, owner };
+}
+
+test('colliding OAuth completions refuse both sides, then each reconnect claims only its own file', async () => {
+  const { pool, setFiles, file, owner } = poolHarness();
+  const a = await pool.oauthStart({ provider: 'claude', workspaceId: 1, userId: 1, visibility: 'shared' });
+  const b = await pool.oauthStart({ provider: 'claude', workspaceId: 2, userId: 2, visibility: 'shared' });
+  setFiles([file('X', 'alice@x', '2026-10-11T10:00:00Z'), file('Y', 'bob@x', '2026-10-11T10:00:01Z')]);
+  const ra = await pool.oauthStatus(a.state, 1, 1);
+  assert.equal(ra.ambiguous, true);
+  const rb = await pool.oauthStatus(b.state, 2, 2);
+  assert.equal(rb.ambiguous, true, 'second completer must not win both files');
+  assert.equal(owner('X'), null);
+  assert.equal(owner('Y'), null);
+  // Reconnects: each login rewrites only its own file.
+  await new Promise((r) => setTimeout(r, 5));
+  const a2 = await pool.oauthStart({ provider: 'claude', workspaceId: 1, userId: 1, visibility: 'shared' });
+  setFiles([file('X', 'alice@x', '2026-10-11T10:05:00Z'), file('Y', 'bob@x', '2026-10-11T10:00:01Z')]);
+  const ra2 = await pool.oauthStatus(a2.state, 1, 1);
+  assert.deepEqual(ra2.added.map((x) => x.email), ['alice@x']);
+  const b2 = await pool.oauthStart({ provider: 'claude', workspaceId: 2, userId: 2, visibility: 'shared' });
+  setFiles([file('X', 'alice@x', '2026-10-11T10:05:00Z'), file('Y', 'bob@x', '2026-10-11T10:06:00Z')]);
+  const rb2 = await pool.oauthStatus(b2.state, 2, 2);
+  assert.deepEqual(rb2.added.map((x) => x.email), ['bob@x']);
+  assert.equal(owner('X'), 1);
+  assert.equal(owner('Y'), 2);
+});
+
+test('a lone completion claims its file; re-login to a plan owned elsewhere is a conflict, not a move', async () => {
+  const { pool, setFiles, file, owner } = poolHarness();
+  const a = await pool.oauthStart({ provider: 'claude', workspaceId: 1, userId: 1, visibility: 'private' });
+  setFiles([file('X', 'alice@x', '2026-10-11T10:00:00Z')]);
+  const ra = await pool.oauthStatus(a.state, 1, 1);
+  assert.deepEqual(ra.added.map((x) => x.email), ['alice@x']);
+  assert.equal(owner('X'), 1);
+  const b = await pool.oauthStart({ provider: 'claude', workspaceId: 2, userId: 2, visibility: 'shared' });
+  setFiles([file('X', 'alice@x', '2026-10-11T10:09:00Z')]);
+  const rb = await pool.oauthStatus(b.state, 2, 2);
+  assert.deepEqual(rb.conflicts.map((x) => x.email), ['alice@x']);
+  assert.equal(rb.added.length, 0);
+  assert.equal(owner('X'), 1, 'plan stays with its workspace');
+  // A stale session or a session from another user is rejected outright.
+  await assert.rejects(() => pool.oauthStatus(b.state, 1, 1), /unknown login session/);
+});

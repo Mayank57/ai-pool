@@ -202,14 +202,15 @@ function summary(ws, from, to, uid) {
   const active = new Set(st.requests.filter((r) => inRange(r, ws, from, to) && r.user_id != null).map((r) => r.user_id)).size;
   const seatCost = (ws.seat_baseline_monthly * active * days) / MONTH_DAYS;
   const subValue = usage.api_cost - overflow;
-  const first = st.requests.filter((r) => r.ws === ws.id).reduce((m, r) => (m == null || r.ts < m ? r.ts : m), null);
+  const lifetime = st.requests.filter((r) => r.ws === ws.id);
+  const first = lifetime.reduce((m, r) => (m == null || r.ts < m ? r.ts : m), null);
   return {
     days, usage, api_cost: usage.api_cost, overflow_cost: overflow, subscription_value: subValue, subscription_cost: subCost, monthly_subscriptions: monthly,
     accounts: live.length, unpriced_accounts: live.filter((a) => a.kind === 'oauth' && !a.plan && a.monthly_cost == null).length,
     savings_vs_api: subValue - subCost, value_multiple: subCost > 0 ? subValue / subCost : null,
     members: { active, total: st.memberships.filter((m) => m.ws === ws.id).length },
     seat_baseline_monthly: ws.seat_baseline_monthly, seat_cost: seatCost, savings_vs_seats: seatCost - subCost, run_rate: (usage.api_cost / days) * MONTH_DAYS,
-    first_request_at: first, collecting: !first || now() - first < DAY || usage.requests < 20,
+    first_request_at: first, collecting: !first || now() - first < DAY || lifetime.length < 20,
   };
 }
 function timeseries(ws, from, to, tz, uid) {

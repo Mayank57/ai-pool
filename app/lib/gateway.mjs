@@ -142,6 +142,11 @@ export function createGateway({ db, cpaUrl }) {
     headers.authorization = `Bearer ${key.cpa_key}`;
     const upstream = await forward(req, res, '/v1/models', '', headers, null);
     const raw = await bufferBody(upstream);
+    if (upstream.statusCode >= 400) {
+      // e.g. the engine hasn't learned a brand-new key yet: surface that rather than an empty list.
+      res.writeHead(upstream.statusCode, filterResponseHeaders(upstream.headers));
+      return res.end(raw);
+    }
     let data;
     try {
       data = JSON.parse(raw.toString());

@@ -68,7 +68,8 @@ export function summary(db, ws, from, to, f = {}) {
   const active = db.prepare(`SELECT COUNT(DISTINCT user_id) AS n FROM requests WHERE workspace_id = ? AND ts >= ? AND ts < ? AND user_id IS NOT NULL`).get(ws.id, from, to).n;
   const members = db.prepare('SELECT COUNT(*) AS n FROM memberships WHERE workspace_id = ?').get(ws.id).n;
   const seatCost = (ws.seat_baseline_monthly * active * days) / MONTH_DAYS;
-  const first = db.prepare('SELECT MIN(ts) AS t FROM requests WHERE workspace_id = ?').get(ws.id).t;
+  const life = db.prepare('SELECT MIN(ts) AS t, COUNT(*) AS n FROM requests WHERE workspace_id = ?').get(ws.id);
+  const first = life.t;
   // Value delivered by subscriptions = everything except pay-per-token overflow.
   const subValue = usage.api_cost - overflowCost;
   return {
@@ -89,8 +90,8 @@ export function summary(db, ws, from, to, f = {}) {
     savings_vs_seats: seatCost - subCost,
     run_rate: (usage.api_cost / days) * MONTH_DAYS,
     first_request_at: first,
-    // Too little history for the savings figures to mean anything yet.
-    collecting: !first || Date.now() - first < DAY || usage.requests < 20,
+    // Too little lifetime history for the savings figures to mean anything yet (independent of the selected range).
+    collecting: !first || Date.now() - first < DAY || life.n < 20,
   };
 }
 
