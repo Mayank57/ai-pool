@@ -60,7 +60,9 @@ value_multiple    = value served by plans ÷ plan_cost
 saved_vs_seats    = active people × seat baseline × days / 30.4375 − plan_cost
 ```
 
-Failed requests are valued at $0. Prices match the longest model-name prefix; unknown models use a provider default and are flagged as estimated. Workspaces can override prices, and saving re-prices history.
+Failed requests are valued at $0. Prices match the longest model-name prefix; unknown models use a provider default and are flagged as estimated. Workspaces can override prices, and saving re-prices history. Subscription cost is prorated per plan for the days it was connected inside the period, so plans added or removed mid-period are counted fairly.
+
+**Insights** are rules over the same data: a plan connected for 7+ days returning under half its price is "underused" (with the next tier down and the monthly saving); a plan at ≥85% of its weekly or ≥90% of its 5-hour window, or with 3+ provider rate-limit errors, is "near its limit" (with the next tier up); overflow spend above 60% of the cheapest plan "could be a subscription"; members idle for the whole period and keys never used after a week are flagged; a value multiple of 1.5× or more is called out as working well.
 
 **Capacity** comes from provider response headers that each request carries back: `anthropic-ratelimit-unified-{5h,7d}-{utilization,reset}` for Claude, `x-codex-{primary,secondary}-{used-percent,window-minutes,reset-after-seconds}` for Codex. The engine also exposes them per plan. Data appears after the first request through a plan.
 
@@ -76,9 +78,16 @@ Failed requests are valued at $0. Prices match the longest model-name prefix; un
 | Invite tokens | `invites.token_hash` | SHA-256, single-use, 14-day expiry |
 
 Other protections:
-- **CSRF:** state-changing API calls must be JSON, so cross-site forms can't send them.
-- **Login throttling:** 10 failures per IP per 15 minutes.
-- **Roles:** checked on every workspace route.
+- **Gateway allow-list:** only `/v1/messages`, `/v1/messages/count_tokens`, `/v1/chat/completions`, `/v1/completions`, `/v1/responses`, `/v1/responses/compact` and `/v1/models` are forwarded. The engine's realtime, image, video, audio and search routes are never reachable through AI Pool.
+- **CSRF:** state-changing API calls must be JSON and same-origin (`Sec-Fetch-Site`), so cross-site forms can't send them.
+- **Abuse limits:** login is limited per account (10 failures / 15 min) and per IP (100 / 15 min); signups 10 per IP per hour; invite lookups 60 per IP per hour; plan sign-ins 20 per user per hour. Caps: 500 keys and 200 plans per workspace, 200 pending invites, 20 workspaces per user.
+- **Sessions:** HMAC-signed, HttpOnly, SameSite=Lax, and versioned. Changing your password or choosing "Sign out everywhere" invalidates every other session.
+- **Headers:** `Content-Security-Policy` (`script-src 'self'`, no inline scripts), `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: same-origin`, HSTS over HTTPS.
+- **Privacy between members:** members see shared plans and their own; other members' private plans are hidden and shared plans' account emails are masked. Members' activity shows only their own requests.
+- **Invites:** single-use, expire in 14 days, and when created for an email address they can only be accepted by that address.
+- **Roles:** checked on every workspace route. Billing, ownership transfer and deletion are owner-only.
 - **Management access:** the engine's management API is localhost-only and its key never leaves the server.
+- **Reverse proxies:** set `TRUST_PROXY=true` when AI Pool sits behind Caddy/nginx so rate limits see real client IPs; leave it unset otherwise so `X-Forwarded-For` can't be spoofed.
+- **Retention:** per-request usage rows are deleted after `REQUEST_RETENTION_DAYS` (default 400).
 
-**Limits of this build:** billing is simulated, there's no email delivery (invite links are copied manually), there's no password reset, and budgets are enforced within a few seconds of usage, so a burst can overshoot slightly.
+**Limits of this build:** billing is simulated, there's no email delivery (invite links are copied manually), there's no password *reset* (changing a known password works), and budgets are enforced within a few seconds of usage, so a burst can overshoot slightly.

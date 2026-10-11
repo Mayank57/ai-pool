@@ -40,7 +40,9 @@ Stop with `scripts/stop-local.sh`. Requirements: Node.js 22.13+, and Go 1.26+ to
 | **Keys** | Scoped to a person, team, project or client; monthly $ and token budgets; shown once; instant revoke |
 | **Members** | Invite links (single-use, 14 days), roles owner / admin / member, offboarding revokes keys and removes their plans |
 | **Capacity** | 5-hour and weekly usage per plan with reset countdowns, read from provider responses |
-| **Savings** | API-equivalent value vs subscription cost, value multiple, savings vs a seat per person, by key / person / model |
+| **Savings** | API-equivalent value vs prorated subscription cost, value multiple, savings vs a seat per person, by key / person / model |
+| **Insights** | Rule-based recommendations: underused plans (downgrade and save $X/mo), saturated plans (upgrade or add capacity), overflow spend that should be a plan, idle members, never-used keys |
+| **Account** | Change name and password (signs out other devices), sign out everywhere, leave or transfer or delete a workspace, delete account |
 | **Setup script** | `curl -fsSL http://localhost:8320/setup.sh \| sh` configures Claude Code and Codex |
 | **Billing** | $20 per connected plan per month after the trial. **Simulated**: no payments |
 
@@ -52,7 +54,15 @@ npm test            # unit tests
 npm run test:e2e    # starts a real CLIProxyAPI + mock Anthropic/OpenAI upstream and runs 17 end-to-end scenarios
 ```
 
-The end-to-end suite covers sign-up, invites, permissions, routing for Claude and Codex, streaming, workspace isolation, private plans with fallback, budgets, billing gates, revocation, offboarding, capacity data, and the setup script.
+The end-to-end suite (24 scenarios) covers sign-up, invites bound to an email, permissions, routing for Claude and Codex, streaming, workspace isolation, private plans with fallback and privacy, budgets, billing gates, revocation, offboarding, leave/transfer/delete, password change, login throttling, gateway route allow-list, security headers, capacity data, and the setup script. `node site/test/demo-flow.mjs` drives the public demo through the admin and employee journey in headless Chrome; CI runs it before every deploy.
+
+## Security model (short version)
+
+- Each workspace's plans carry a routing prefix inside the engine; the gateway adds it, clients can't choose it, and unprefixed requests reach nothing. Private plans serve only their owner.
+- The gateway exposes only chat/completions/responses/messages/models; the engine's realtime, media and search routes are not reachable.
+- Passwords: scrypt. Sessions: signed, HttpOnly, versioned (password change signs out other devices). Keys: stored hashed, shown once. Upstream API keys: AES-256-GCM.
+- Login limits per account and per IP, signup/invite/OAuth limits, caps on keys/plans/invites/workspaces, CSP and other security headers, JSON-only + same-origin checks on every mutation.
+- Details and the terms-of-service discussion: [docs/HOW_IT_WORKS.md](docs/HOW_IT_WORKS.md).
 
 ## Docs
 

@@ -15,7 +15,7 @@ For the person setting AI Pool up for a company (CEO, CTO, IT). Trying it on you
 | This computer | `scripts/setup.sh && scripts/start-local.sh` | `http://localhost:8320` |
 | A server (Docker) | `scripts/setup.sh --mode docker --url https://ai.acme.com` then `docker compose -f deploy/docker-compose.yml --env-file .env up -d` | `https://ai.acme.com` |
 
-For a server, point DNS at it, add `APP_DOMAIN=ai.acme.com` to `.env`, and add `--profile caddy` to the compose command for automatic HTTPS. Only ports 80/443 need to be public. The routing engine is never exposed.
+For a server, point DNS at it, add `APP_DOMAIN=ai.acme.com` and `TRUST_PROXY=true` to `.env`, set `APP_PUBLISH=127.0.0.1:8320` so the raw port isn't public, and add `--profile caddy` to the compose command for automatic HTTPS. Only ports 80/443 need to be public. The routing engine is never exposed.
 
 Generated files (keep them private): `.env` (secrets), `proxy/config.yaml`, `proxy/auths/` (plan sign-ins, **most sensitive**), and `data/aipool.db` or the `app-data` volume.
 
@@ -66,6 +66,8 @@ Send the link privately. Links are single-use and expire after 14 days. Send emp
 | Value multiple | Plan value ÷ plan cost. Above 1× means the plans beat paying per token |
 | Saved vs a seat each | Active people × seat baseline − plan cost |
 | Capacity | Each plan's 5-hour and weekly usage and reset time; "% unused, resets in …" warns when weekly capacity is about to expire unused |
+| Insights | Concrete recommendations: downgrade an underused plan (with the saving), upgrade or add capacity for a saturated one, replace heavy overflow spend with a plan, chase idle members, revoke never-used keys |
+| Collecting data | A new workspace shows this instead of savings until it has a day of traffic and 20 requests, so early numbers don't mislead |
 
 Model prices marked **verify** (Settings) came from secondary sources. Check them against the provider's pricing page; saving re-prices history.
 
@@ -74,6 +76,9 @@ Model prices marked **verify** (Settings) came from secondary sources. Check the
 | Task | Where |
 |---|---|
 | Offboard someone | Members → Remove: keys revoked and their plans leave the pool. History is kept |
+| Hand over the workspace | Settings → Ownership & deletion → Transfer (owner only); you stay as admin |
+| Close the workspace | Settings → Ownership & deletion → Delete: disconnects every plan, revokes every key, erases history |
+| Your own login | Account (bottom of the sidebar): change name or password, sign out everywhere, leave workspaces, delete account |
 | Leaked key | Keys → Revoke, then create a new one |
 | Plan misbehaving | Plans → Pause / Remove |
 | Back up | `data/aipool.db` and `proxy/auths/` (encrypt: they hold live sign-ins) |

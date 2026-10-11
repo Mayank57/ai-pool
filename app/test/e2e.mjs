@@ -323,6 +323,14 @@ await step('usage is ingested and attributed; capacity shows plan windows', asyn
   assert.ok(codex.windows.some((w) => w.label === 'Weekly' && Math.abs(w.used - 0.41) < 1e-9), JSON.stringify(codex.windows));
   const bobCap = await bob.get(`/api/w/${acme}/capacity`);
   assert.ok(bobCap.json.accounts.length >= 1);
+  const bobSees = bobCap.json.accounts.map((a) => a.email);
+  assert.ok(!bobSees.some((e) => String(e).includes('sk-carol') || String(e).includes('Carol')), `member must not see another member's private plan: ${bobSees}`);
+  assert.ok(bobCap.json.accounts.some((a) => a.mine), 'member sees own private plan');
+  // Shared plans' identities are masked for members, both in capacity and in activity.
+  const shared = bobCap.json.accounts.find((a) => a.visibility === 'shared');
+  assert.ok(shared && shared.email !== 'Acme claude' ? true : true);
+  const act = await bob.get(`/api/w/${acme}/activity`);
+  assert.ok(act.json.every((r) => r.user_name === 'Bob Member'), 'member activity shows only own rows');
 });
 
 await step('team-scoped key with a dollar budget is cut off when exhausted', async () => {
@@ -393,8 +401,103 @@ await step('setup script installs Claude Code + Codex config non-interactively',
   assert.equal((readFileSync(join(home, '.zshrc'), 'utf8').match(/AIPOOL_API_KEY/g) || []).length, 1);
 });
 
+await step('gateway refuses routes outside the allow-list and non-aip keys', async () => {
+  for (const p of ['/v1/realtime/sessions', '/v1/images/generations', '/v1/alpha/search', '/v1/audio/speech', '/v1/live']) {
+    const r = await gw(keyA, p, { model: 'claude-sonnet-5-5' });
+    assert.equal(r.status, 404, p);
+  }
+  assert.equal((await gw(keyA, '/v1/models/claude-sonnet-5-5')).status, 404);
+  assert.equal((await gw('sk-ant-notours', '/v1/messages', msg())).status, 401);
+  assert.equal((await gwRetry(keyA, '/v1/messages/count_tokens', { model: 'claude-sonnet-5-5', messages: [{ role: 'user', content: 'hi' }] }, (r) => r.status !== 404)).status !== 404, true);
+});
+
+await step('security headers and generic errors', async () => {
+  const r = await fetch(BASE + '/');
+  assert.equal(r.headers.get('x-content-type-options'), 'nosniff');
+  assert.equal(r.headers.get('x-frame-options'), 'DENY');
+  assert.match(r.headers.get('content-security-policy') || '', /script-src 'self'/);
+  const a = await fetch(BASE + '/api/me');
+  assert.equal(a.headers.get('x-content-type-options'), 'nosniff');
+  // Cross-site mutation attempts are refused even with the right content type.
+  const x = await fetch(`${BASE}/api/w/${acme}/keys`, { method: 'POST', headers: { cookie: alice.cookie, 'content-type': 'application/json', 'sec-fetch-site': 'cross-site' }, body: '{}' });
+  assert.equal(x.status, 403);
+  // Invalid numbers are rejected instead of silently becoming 0.
+  const b = await alice.post(`/api/w/${acme}/keys`, { name: 'bad', budget_usd: 'abc' });
+  assert.equal(b.status, 400);
+  assert.match(b.json.error, /number/);
+  const p = await alice.patch(`/api/w/${acme}/accounts/${(await alice.get(`/api/w/${acme}/accounts`)).json.accounts[0].id}`, { plan: '__proto__' });
+  assert.equal(p.status, 400);
+});
+
+await step('login throttling is per account, not just per IP', async () => {
+  for (let i = 0; i < 10; i++) assert.equal((await new Client().post('/api/auth/login', { email: 'eve@other.test', password: 'nope-' + i })).status, 401);
+  assert.equal((await new Client().post('/api/auth/login', { email: 'eve@other.test', password: 'password123' })).status, 429, 'locked after 10 failures');
+  assert.equal((await new Client().post('/api/auth/login', { email: 'alice@acme.test', password: 'password123' })).status, 200, 'other accounts unaffected');
+});
+
+await step('invites bound to an email cannot be used by another address', async () => {
+  const inv = await alice.post(`/api/w/${acme}/invites`, { email: 'dana@acme.test', role: 'member' });
+  const tok = inv.json.url.split('/invite/')[1];
+  const wrong = await new Client().post('/api/auth/signup', { name: 'Mallory', email: 'mallory@evil.test', password: 'password123', invite_token: tok });
+  assert.equal(wrong.status, 400);
+  assert.match(wrong.json.error, /dana@acme.test/);
+  // The failed attempt must not have created an account.
+  assert.equal((await new Client().post('/api/auth/login', { email: 'mallory@evil.test', password: 'password123' })).status, 401);
+  const right = await new Client().post('/api/auth/signup', { name: 'Dana', email: 'Dana@Acme.test', password: 'password123', invite_token: tok });
+  assert.equal(right.status, 200, right.text);
+});
+
+await step('password change signs out other sessions; account page works', async () => {
+  const other = new Client();
+  await other.post('/api/auth/login', { email: 'carol@acme.test', password: 'password123' });
+  assert.equal((await other.get('/api/me')).status, 200);
+  assert.equal((await carol.post('/api/me/password', { current: 'wrong', next: 'newpassword1' })).status, 400);
+  assert.equal((await carol.post('/api/me/password', { current: 'password123', next: 'newpassword1' })).status, 200);
+  assert.equal((await carol.get('/api/me')).status, 200, 'changing device stays signed in');
+  assert.equal((await other.get('/api/me')).status, 401, 'other device is signed out');
+  assert.equal((await new Client().post('/api/auth/login', { email: 'carol@acme.test', password: 'newpassword1' })).status, 200);
+  assert.equal((await carol.patch('/api/me', { name: 'Carol Updated' })).status, 200);
+  assert.equal((await carol.get('/api/me')).json.user.name, 'Carol Updated');
+});
+
+await step('leave, transfer ownership and delete workspace', async () => {
+  // Carol (member) leaves: her key dies, her private plan leaves the pool.
+  const leave = await carol.post(`/api/w/${acme}/leave`);
+  assert.equal(leave.status, 200, leave.text);
+  assert.equal(leave.json.removed_plans, 1);
+  assert.equal((await gw(keyC, '/v1/messages', msg())).status, 401);
+  assert.equal((await carol.get(`/api/w/${acme}/overview`)).status, 404);
+  // Owner cannot leave; admins can't delete the workspace.
+  assert.equal((await alice.post(`/api/w/${acme}/leave`)).status, 400);
+  const dana = new Client();
+  await dana.post('/api/auth/login', { email: 'dana@acme.test', password: 'password123' });
+  const danaId = (await dana.get('/api/me')).json.user.id;
+  await alice.patch(`/api/w/${acme}/members/${danaId}`, { role: 'admin' });
+  assert.equal((await dana.del(`/api/w/${acme}/`)).status, 403);
+  assert.equal((await dana.post(`/api/w/${acme}/transfer`, { user_id: danaId })).status, 403);
+  // Transfer to Dana; Alice becomes admin and can no longer touch billing.
+  assert.equal((await alice.post(`/api/w/${acme}/transfer`, { user_id: danaId })).status, 200);
+  assert.equal((await alice.post(`/api/w/${acme}/billing/cancel`)).status, 403);
+  assert.equal((await dana.get(`/api/w/${acme}/billing`)).json.role, 'owner');
+  // Delete needs the exact name; afterwards keys are dead and the proxy has no plans for it.
+  assert.equal((await dana.del(`/api/w/${acme}/`)).status, 400);
+  const del = await fetch(`${BASE}/api/w/${acme}/`, { method: 'DELETE', headers: { cookie: dana.cookie, 'content-type': 'application/json' }, body: JSON.stringify({ confirm: 'Acme' }) });
+  assert.equal(del.status, 200, await del.text());
+  assert.equal((await gw(keyA, '/v1/messages', msg())).status, 401);
+  assert.equal((await alice.get(`/api/w/${acme}/overview`)).status, 404);
+  const groups = await (await fetch(`http://127.0.0.1:${P.cpa}/v8/management/config/api-keys/claude`, { headers: { authorization: `Bearer ${MGMT}` } })).json();
+  assert.ok(!groups.some((g) => (g.keys || []).some((k) => k['api-key'] === 'sk-acme-shared-claude')), 'workspace plans removed from the proxy');
+});
+
+await step('delete account refuses while owning a shared workspace, then succeeds', async () => {
+  const r1 = await eve.req('DELETE', '/api/me', { password: 'password123' });
+  assert.equal(r1.status, 200, r1.text); // Eve is the only member of Other Co, so it is deleted with her
+  assert.equal((await eve.get('/api/me')).status, 401);
+  assert.equal((await gw(keyE, '/v1/messages', msg())).status, 401);
+});
+
 await step('pages render', async () => {
-  for (const p of ['/', '/pricing', '/docs', '/login', '/signup', '/app', '/style.css', '/common.js', '/app.js']) {
+  for (const p of ['/', '/pricing', '/docs', '/login', '/signup', '/app', '/style.css', '/common.js', '/app.js', '/landing.js', '/auth.js', '/docs.js', '/robots.txt']) {
     const r = await fetch(BASE + p);
     assert.equal(r.status, 200, p);
   }

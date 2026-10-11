@@ -22,8 +22,9 @@ const PAGES = {
   setup: { title: 'Connect your tools' },
   billing: { title: 'Billing' },
   settings: { title: 'Settings', admin: true },
+  account: { title: 'Your account', hidden: true },
 };
-const ICON = { overview: '◧', capacity: '◔', keys: '⚿', plans: '▤', members: '☺', usage: '≣', setup: '⌘', billing: '$', settings: '⚙' };
+const ICON = { overview: '◧', capacity: '◔', keys: '⚿', plans: '▤', members: '☺', usage: '≣', setup: '⌘', billing: '$', settings: '⚙', account: '◉' };
 
 // ---------- modal ----------
 
@@ -91,11 +92,11 @@ function renderShell() {
     if (sw.value === 'new') return newWorkspace();
     location.hash = `#/w/${sw.value}/overview`;
   };
-  const items = Object.entries(PAGES).filter(([, p]) => !p.admin || isAdmin());
+  const items = Object.entries(PAGES).filter(([, p]) => !p.hidden && (!p.admin || isAdmin()));
   const link = (k, p) => `<a class="nav${k === S.page ? ' active' : ''}" href="#/w/${S.wsId}/${k}"><span style="width:16px;text-align:center;opacity:.7">${ICON[k]}</span>${p.title}</a>`;
   $('#nav').innerHTML = items.map(([k, p]) => link(k, p)).join('');
   $('#mnav').innerHTML = items.map(([k, p]) => `<a class="${k === S.page ? 'active' : ''}" href="#/w/${S.wsId}/${k}">${p.title}</a>`).join('');
-  $('#me').innerHTML = `<div style="font-weight:600">${esc(S.me.name)}</div><div class="muted small">${esc(S.me.email)}</div><div class="row" style="margin-top:8px"><span class="tag">${esc(S.role)}</span><span class="spacer"></span><button class="btn ghost sm" id="logout">Log out</button></div>`;
+  $('#me').innerHTML = `<a href="#/w/${S.wsId}/account" style="color:inherit;text-decoration:none"><div class="row" style="gap:6px"><span style="font-weight:600">${esc(S.me.name)}</span><span class="tag">${esc(S.role)}</span></div><div class="muted small">${esc(S.me.email)}</div></a><div class="row" style="margin-top:8px;gap:4px"><a class="btn ghost sm" href="#/w/${S.wsId}/account">Account</a><span class="spacer"></span><button class="btn ghost sm" id="logout">Log out</button></div>`;
   $('#logout').onclick = async () => {
     await api('/api/auth/logout', { method: 'POST' });
     location.href = './';
@@ -119,6 +120,7 @@ async function render() {
   try {
     await VIEWS[S.page](el);
   } catch (err) {
+    if (err.status === 401) return (location.href = 'login');
     el.innerHTML = `<div class="notice err">${esc(err.message)}</div>`;
   }
   renderBanner();
@@ -206,7 +208,26 @@ async function viewOverview(el) {
       .map((x, i) => `<div class="check-item${x.done ? ' done' : ''}"><span class="tick">${x.done ? '✓' : i + 1}</span><span class="what">${esc(x.label)}${x.optional ? ' <span class="muted small">(optional)</span>' : ''}${!isAdmin() && x.id === 'plan' && !x.done ? '<div class="muted small" style="text-decoration:none">Already pay for Claude or ChatGPT? Connect it as private: you use it first, and the team pool covers you when it runs out.</div>' : ''}</span>${x.done ? '' : actions[x.id] || ''}</div>`)
       .join('')}</div></div>`;
 
-  const kpis = isAdmin()
+  const INSIGHT = { save: ['good-mark', 'Save money'], capacity: ['warning-mark', 'Capacity'], hygiene: ['muted', 'Housekeeping'], good: ['accent', 'Working well'] };
+  const insightsCard =
+    isAdmin() && (d.insights || []).length
+      ? `<div class="card"><h2>Insights</h2><p class="sub">What the numbers suggest for this period. Recommendations use API list prices and your plan prices from Settings.</p>
+        <div class="checklist">${d.insights
+          .map(
+            (i) => `<div class="check-item" style="align-items:flex-start"><span class="pill" style="flex:none;margin-top:2px"><span class="dot" style="background:var(--${INSIGHT[i.kind][0]})"></span>${INSIGHT[i.kind][1]}</span>
+              <span class="what"><b>${esc(i.title)}</b><div class="ink2 small">${esc(i.detail)}</div></span>
+              ${i.impact_monthly > 0 ? `<span class="num" style="color:var(--good);font-weight:650;white-space:nowrap">${money(i.impact_monthly, 0)}/mo</span>` : ''}
+              ${i.page ? `<a class="btn sm" href="#/w/${S.wsId}/${i.page}">Open</a>` : ''}</div>`,
+          )
+          .join('')}</div></div>`
+      : '';
+
+  const kpis = s.collecting && isAdmin()
+    ? `<div class="card"><h2>Collecting data</h2><p class="sub">Savings figures appear once there's at least a day of traffic and 20 requests. So far: ${compact(s.usage.requests)} request${s.usage.requests === 1 ? '' : 's'} worth ${money(s.api_cost)} at API prices.</p>
+        <div class="tiles"><div class="tile"><div class="label">Requests</div><div class="value">${compact(s.usage.requests)}</div><div class="foot">${s.usage.failed} failed</div></div>
+        <div class="tile"><div class="label">Tokens</div><div class="value">${compact(s.usage.tokens)}</div><div class="foot">${compact(s.usage.cache_read_tokens)} cache reads</div></div>
+        <div class="tile"><div class="label">Plans connected</div><div class="value">${s.accounts}</div><div class="foot">${money(s.monthly_subscriptions, 0)}/mo</div></div></div></div>`
+    : isAdmin()
     ? `<div class="hero-kpi">
         <div class="card headline"><div class="label">Saved vs paying API prices</div><div class="value${s.savings_vs_api < 0 ? ' neg' : ''}">${money(s.savings_vs_api, 0)}</div>
           <div class="ink2 small">Plans delivered ${money(s.subscription_value)} of API-priced usage for ${money(s.subscription_cost)} in subscriptions.${s.overflow_cost ? ` Another ${money(s.overflow_cost)} ran on pay-per-token API keys.` : ''}</div></div>
@@ -251,6 +272,7 @@ async function viewOverview(el) {
   el.innerHTML = `${remaining.length ? checklist : ''}
     ${!isAdmin() ? `<h2 style="font-size:15px;margin:${remaining.length ? 22 : 0}px 0 0">Your usage</h2>` : ''}
     ${kpis}
+    ${insightsCard}
     ${isAdmin() && s.unpriced_accounts ? `<div class="notice">${s.unpriced_accounts} plan(s) have no plan type set, so they count as $0 and savings look higher than they are. <a href="#/w/${S.wsId}/plans">Set plan types →</a></div>` : ''}
     <div class="card"><h2>API-equivalent value over time</h2><p class="sub">What ${isAdmin() ? 'this workspace\'s' : 'your'} usage would cost at pay-as-you-go API prices.</p><div id="chart"></div></div>
     <div class="grid2">${keysCard}${peopleCard}</div>
@@ -348,8 +370,8 @@ async function viewKeys(el) {
       (b.onclick = async () => {
         const id = b.closest('tr').dataset.id;
         if (!(await confirmBox('Revoke key?', 'Anything using this key stops working right away. This can\'t be undone.', 'Revoke', true))) return;
-        await api(W(`/keys/${id}/revoke`), { method: 'POST' });
-        toast('Key revoked');
+        const r = await api(W(`/keys/${id}/revoke`), { method: 'POST' });
+        toast(r.warning || 'Key revoked', r.warning ? 'err' : 'ok');
         render();
       }),
   );
@@ -393,6 +415,7 @@ async function createKey() {
       const body = { name: d.querySelector('#kname').value };
       if (isAdmin()) Object.assign(body, { scope_type: scope.value, user_id: d.querySelector('#kperson').value, budget_usd: d.querySelector('#kbu').value, budget_tokens: d.querySelector('#kbt').value });
       const r = await api(W('/keys'), { method: 'POST', body });
+      if (r.warning) toast(r.warning, 'err');
       showNewKey(r.key);
       if (S.page === 'keys' || S.page === 'overview') render();
     } catch (err) {
@@ -710,7 +733,7 @@ function invite() {
 
 async function viewUsage(el) {
   const rows = await api(W('/activity'));
-  el.innerHTML = `<div class="card"><h2>Recent requests</h2><p class="sub">The latest 200 requests ${isAdmin() ? 'in this workspace' : 'made with your keys'}. Prompts and responses are never stored.</p>
+  el.innerHTML = `<div class="card"><h2>Recent requests</h2><p class="sub">The latest 200 requests ${isAdmin() ? 'in this workspace' : 'made with your keys'}. AI Pool doesn't store prompt or response text.</p>
     ${
       rows.length
         ? `<div class="table-wrap"><table><thead><tr><th>When</th>${isAdmin() ? '<th>Person</th>' : ''}<th>Key</th><th>Model</th><th>Plan</th><th class="num">Tokens</th><th class="num">Latency</th><th class="num">Value</th><th>Result</th></tr></thead><tbody>${rows
@@ -807,7 +830,51 @@ async function viewSettings(el) {
         .map(([k, p]) => `<tr data-price="${esc(k)}"><td class="mono">${esc(k)}</td>${['in', 'out', 'cr', 'cw'].map((f) => `<td class="num"><input type="number" min="0" step="0.01" data-pf="${f}" value="${p[f] ?? 0}" style="width:80px"/></td>`).join('')}<td>${s.default_prices[k]?.verify ? '<span class="tag">verify</span>' : ''}</td></tr>`)
         .join('')}</tbody></table></div></div>
     <div class="row"><button class="btn primary" id="ssave">Save settings</button></div>
-    <div class="card"><h2>System</h2><div class="ink2 small">Usage last collected ${ago(h.lastPollAt)}${h.lastPollError ? ` · <span style="color:var(--critical)">${esc(h.lastPollError)}</span>` : ''}<br/>Plans last synced ${ago(h.lastSyncAt)}${h.lastSyncError ? ` · <span style="color:var(--critical)">${esc(h.lastSyncError)}</span>` : ''}<br/>Endpoint: <code>${esc(S.publicUrl)}</code></div></div>`;
+    <div class="card"><h2>System</h2><div class="ink2 small">Usage last collected ${ago(h.lastPollAt)}${h.lastPollError ? ` · <span style="color:var(--critical)">${esc(h.lastPollError)}</span>` : ''}<br/>Plans last synced ${ago(h.lastSyncAt)}${h.lastSyncError ? ` · <span style="color:var(--critical)">${esc(h.lastSyncError)}</span>` : ''}<br/>Endpoint: <code>${esc(S.publicUrl)}</code><br/>Usage history is kept for ${s.retention_days} days.</div></div>
+    ${
+      S.role === 'owner'
+        ? `<div class="card" style="border-color:color-mix(in srgb, var(--critical-mark) 40%, var(--border))"><h2>Ownership &amp; deletion</h2><p class="sub">Only the owner sees this section.</p>
+          <div class="row" style="margin-bottom:14px"><label class="field" style="margin:0;min-width:240px"><span>Transfer ownership to</span><select id="xfer-to"><option value="">Choose a member…</option></select></label><button class="btn" id="xfer" style="align-self:flex-end">Transfer</button></div>
+          <p class="ink2 small">After a transfer you stay in the workspace as an admin.</p>
+          <hr style="border:0;border-top:1px solid var(--grid);margin:14px 0"/>
+          <p class="ink2 small" style="margin:0 0 8px">Deleting the workspace disconnects every plan, revokes every key and erases its history. This cannot be undone.</p>
+          <button class="btn danger" id="ws-delete">Delete workspace…</button></div>`
+        : ''
+    }`;
+  if (S.role === 'owner') {
+    const mem = (await api(W('/members'))).members.filter((m) => m.id !== S.me.id);
+    $('#xfer-to').innerHTML += mem.map((m) => `<option value="${m.id}">${esc(m.name)} (${esc(m.role)})</option>`).join('');
+    $('#xfer').onclick = async () => {
+      const uid = $('#xfer-to').value;
+      const name = $('#xfer-to').selectedOptions[0]?.textContent;
+      if (!uid) return toast('Choose who should become the owner.', 'err');
+      if (!(await confirmBox('Transfer ownership?', `${esc(name)} becomes the owner and controls billing and deletion. You become an admin.`, 'Transfer', true))) return;
+      try {
+        await api(W('/transfer'), { method: 'POST', body: { user_id: uid } });
+        toast('Ownership transferred');
+        const me = await api('/api/me');
+        S.workspaces = me.workspaces;
+        route();
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+    $('#ws-delete').onclick = () => {
+      const d = modal(`<h3>Delete "${esc(s.name)}"?</h3><p class="ink2">Every plan is disconnected, every key stops working and all usage history is erased. Members lose access immediately. Type the workspace name to confirm.</p>
+        <label class="field"><span>Workspace name</span><input type="text" id="confirm-name" autocomplete="off"/></label>
+        <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn danger" id="really">Delete workspace</button></div>`);
+      d.querySelector('#really').onclick = async () => {
+        try {
+          await api(W('/'), { method: 'DELETE', body: { confirm: d.querySelector('#confirm-name').value } });
+          d.close();
+          location.hash = '';
+          location.reload();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      };
+    };
+  }
   $('#ssave').onclick = async () => {
     const plans = {};
     el.querySelectorAll('[data-plan]').forEach((i) => (plans[i.dataset.plan] = { label: i.dataset.label, monthly: Number(i.value) }));
@@ -830,7 +897,86 @@ async function viewSettings(el) {
   };
 }
 
-const VIEWS = { overview: viewOverview, capacity: viewCapacity, keys: viewKeys, plans: viewPlans, members: viewMembers, usage: viewUsage, setup: viewSetup, billing: viewBilling, settings: viewSettings };
+// ---------- account ----------
+
+async function viewAccount(el) {
+  const me = await api('/api/me');
+  S.workspaces = me.workspaces;
+  const ws = me.workspaces;
+  el.innerHTML = `<div class="grid2">
+      <div class="card"><h2>Profile</h2><p class="sub">Signed in as ${esc(me.user.email)}.</p>
+        <label class="field"><span>Name</span><input type="text" id="acc-name" value="${esc(me.user.name)}"/></label>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="acc-save">Save</button></div></div>
+      <div class="card"><h2>Password</h2><p class="sub">Changing it signs out every other device.</p>
+        <label class="field"><span>Current password</span><input type="password" id="pw-cur" autocomplete="current-password"/></label>
+        <label class="field"><span>New password</span><input type="password" id="pw-new" autocomplete="new-password"/><div class="hint">At least 8 characters.</div></label>
+        <div class="row" style="margin-top:12px"><button class="btn primary" id="pw-save">Change password</button><button class="btn" id="logout-all">Sign out everywhere</button></div></div>
+    </div>
+    <div class="card"><h2>Your workspaces</h2><p class="sub">Leaving a workspace revokes your keys there and removes any plans you connected to it.</p>
+      <table><tbody>${ws
+        .map((w) => `<tr data-ws="${w.id}"><td><b>${esc(w.name)}</b></td><td><span class="tag">${esc(w.role)}</span></td><td class="num">${w.role === 'owner' ? '<span class="muted small">Owners transfer or delete under Settings</span>' : '<button class="btn sm danger" data-leave>Leave</button>'}</td></tr>`)
+        .join('')}</tbody></table></div>
+    <div class="card" style="border-color:color-mix(in srgb, var(--critical-mark) 40%, var(--border))"><h2>Delete account</h2><p class="sub">Removes your login and takes you out of every workspace. Workspaces you own must be transferred or deleted first (unless you're their only member).</p>
+      <button class="btn danger" id="acc-delete">Delete my account…</button></div>`;
+  $('#acc-save').onclick = async () => {
+    try {
+      await api('/api/me', { method: 'PATCH', body: { name: $('#acc-name').value } });
+      S.me.name = $('#acc-name').value.trim();
+      renderShell();
+      toast('Saved');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+  $('#pw-save').onclick = async () => {
+    try {
+      await api('/api/me/password', { method: 'POST', body: { current: $('#pw-cur').value, next: $('#pw-new').value } });
+      $('#pw-cur').value = $('#pw-new').value = '';
+      toast('Password changed. Other devices were signed out.');
+    } catch (err) {
+      toast(err.message, 'err');
+    }
+  };
+  $('#logout-all').onclick = async () => {
+    if (!(await confirmBox('Sign out everywhere?', 'Every other browser and device will need to log in again. This one stays signed in.', 'Sign out everywhere'))) return;
+    await api('/api/me/logout-all', { method: 'POST' });
+    toast('Other sessions were signed out');
+  };
+  el.querySelectorAll('[data-leave]').forEach(
+    (b) =>
+      (b.onclick = async () => {
+        const id = Number(b.closest('tr').dataset.ws);
+        const w = ws.find((x) => x.id === id);
+        if (!(await confirmBox(`Leave ${w.name}?`, 'Your keys there stop working right away and any plans you connected leave that pool.', 'Leave', true))) return;
+        try {
+          await api(`/api/w/${id}/leave`, { method: 'POST' });
+          toast(`You left ${w.name}`);
+          const fresh = await api('/api/me');
+          S.workspaces = fresh.workspaces;
+          if (!S.workspaces.length) return location.reload();
+          if (id === S.wsId) location.hash = `#/w/${S.workspaces[0].id}/overview`;
+          else render();
+        } catch (err) {
+          toast(err.message, 'err');
+        }
+      }),
+  );
+  $('#acc-delete').onclick = () => {
+    const d = modal(`<h3>Delete your account?</h3><p class="ink2">Your login is removed and you leave every workspace. This cannot be undone. Enter your password to confirm.</p>
+      <label class="field"><span>Password</span><input type="password" id="del-pw" autocomplete="current-password"/></label>
+      <div class="actions"><button class="btn" data-close>Cancel</button><button class="btn danger" id="del-go">Delete account</button></div>`);
+    d.querySelector('#del-go').onclick = async () => {
+      try {
+        await api('/api/me', { method: 'DELETE', body: { password: d.querySelector('#del-pw').value } });
+        location.href = './';
+      } catch (err) {
+        toast(err.message, 'err');
+      }
+    };
+  };
+}
+
+const VIEWS = { overview: viewOverview, capacity: viewCapacity, keys: viewKeys, plans: viewPlans, members: viewMembers, usage: viewUsage, setup: viewSetup, billing: viewBilling, settings: viewSettings, account: viewAccount };
 
 // Refresh live pages every 30s while visible (not while a dialog is open).
 setInterval(() => {

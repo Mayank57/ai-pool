@@ -14,19 +14,20 @@ rmSync(dist, { recursive: true, force: true });
 mkdirSync(dist, { recursive: true });
 cpSync(src, dist, { recursive: true });
 cpSync(join(root, 'app', 'lib', 'pricing.mjs'), join(dist, 'pricing.mjs'));
-cpSync(join(here, 'demo', 'demo-api.js'), join(dist, 'demo-api.js'));
-cpSync(join(here, 'demo', 'demo-signin.html'), join(dist, 'demo-signin.html'));
+for (const f of ['demo-api.js', 'demo-signin.html', 'demo-signin.js']) cpSync(join(here, 'demo', f), join(dist, f));
 
 const edit = (file, fn) => writeFileSync(join(dist, file), fn(readFileSync(join(dist, file), 'utf8')));
 const must = (s, a, b) => {
-  if (!s.includes(a)) throw new Error(`build: expected to find ${JSON.stringify(a.slice(0, 60))}`);
+  if (!s.includes(a)) throw new Error(`build: expected to find ${JSON.stringify(a.slice(0, 60))} in a page`);
   return s.replace(a, b);
 };
 
-// Every page loads the simulated backend before any app code runs.
-const SHIM = '<link rel="stylesheet" href="style.css" />\n  <script type="module" src="demo-api.js"></script>\n  <style>body{padding-bottom:72px}</style>';
-for (const f of readdirSync(dist).filter((f) => f.endsWith('.html') && f !== 'demo-signin.html')) {
-  edit(f, (s) => must(s, '<link rel="stylesheet" href="style.css" />', SHIM));
+// Every page gets a CSP (GitHub Pages can't send headers) and loads the simulated
+// backend before any app code runs.
+const CSP = `<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; base-uri 'self'; form-action 'self'; object-src 'none'" />`;
+const SHIM = `${CSP}\n  <link rel="stylesheet" href="style.css" />\n  <script type="module" src="demo-api.js"></script>\n  <style>body{padding-bottom:72px}</style>`;
+for (const f of readdirSync(dist).filter((f) => f.endsWith('.html'))) {
+  edit(f, (s) => must(s, '<link rel="stylesheet" href="style.css" />', f === 'demo-signin.html' ? `${CSP}\n  <link rel="stylesheet" href="style.css" />` : SHIM));
 }
 
 edit('landing.html', (s) => {
@@ -38,7 +39,7 @@ edit('landing.html', (s) => {
 edit('auth.html', (s) =>
   must(s, '<p id="err"', '<p class="hint" style="margin-top:12px">Demo: use any made-up email and password. They\'re stored only in this browser.</p>\n        <p id="err"'),
 );
-edit('docs.html', (s) => must(s, 'const base = location.origin;', "const base = 'https://ai.yourcompany.com';"));
+edit('docs.js', (s) => must(s, 'const base = location.origin;', "const base = 'https://ai.yourcompany.com';"));
 
 // Clean URLs: GitHub Pages serves /foo from foo.html.
 cpSync(join(dist, 'landing.html'), join(dist, 'index.html'));

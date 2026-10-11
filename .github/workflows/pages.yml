@@ -1,9 +1,10 @@
-# Publishes the static AI Pool concept demo (site/dist) to GitHub Pages.
-name: Deploy demo site
+# Tests the app and the static demo, then publishes the demo (site/dist) to GitHub Pages.
+name: Test and deploy demo site
 
 on:
   push:
     branches: [main]
+  pull_request:
   workflow_dispatch:
 
 permissions:
@@ -16,20 +17,33 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Unit tests
+        run: cd app && npm test
+      - name: Build demo site
+        run: node site/build.mjs
+      - name: Demo journey in headless Chrome
+        run: node site/test/demo-flow.mjs
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site/dist
+
   deploy:
+    if: github.event_name != 'pull_request'
+    needs: test
     runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - run: node site/build.mjs
       - uses: actions/configure-pages@v5
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: site/dist
       - id: deployment
         uses: actions/deploy-pages@v4

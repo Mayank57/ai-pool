@@ -8,14 +8,19 @@ export function esc(s) {
 
 export async function api(path, opts = {}) {
   const method = opts.method || 'GET';
-  const res = await fetch(path, {
-    method,
-    headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {},
-    body: method !== 'GET' ? JSON.stringify(opts.body ?? {}) : undefined,
-    credentials: 'same-origin',
-  });
+  let res;
+  try {
+    res = await fetch(path, {
+      method,
+      headers: method !== 'GET' ? { 'Content-Type': 'application/json' } : {},
+      body: method !== 'GET' ? JSON.stringify(opts.body ?? {}) : undefined,
+      credentials: 'same-origin',
+    });
+  } catch {
+    throw Object.assign(new Error("Can't reach AI Pool. Check your connection and try again."), { status: 0 });
+  }
   const data = await res.json().catch(() => ({}));
-  if (!res.ok) throw Object.assign(new Error(data.error || res.statusText), { status: res.status });
+  if (!res.ok) throw Object.assign(new Error(data.error || `Request failed (${res.status})`), { status: res.status });
   return data;
 }
 
@@ -122,7 +127,9 @@ export function stackedChart(el, { rows, bucket_ms: bucketMs }, range) {
   const labelEvery = Math.ceil(data.length / Math.max(Math.floor(iw / 64), 1));
 
   let svg = `<g class="grid">${ticks.map((v) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>`;
-  svg += ticks.map((v) => `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${money(v, v < 10 && v % 1 ? 2 : 0)}</text>`).join('');
+  // Tick precision follows the axis scale, so sub-dollar charts don't read "$0.00" on every line.
+  const tickDigits = niceMax >= 20 ? 0 : niceMax >= 1 ? 1 : niceMax >= 0.05 ? 2 : 3;
+  svg += ticks.map((v) => `<text x="${m.l - 8}" y="${y(v) + 4}" text-anchor="end">${money(v, tickDigits)}</text>`).join('');
   data.forEach((d, i) => {
     const x = m.l + i * step + (step - bw) / 2;
     let acc = 0;

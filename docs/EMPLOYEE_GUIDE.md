@@ -31,9 +31,13 @@ Paste your key when asked. The script checks the key, backs up your current conf
 - Codex: open a new terminal before running `codex`.
 - Other tools (Cursor, Cline, OpenCode, SDKs): **Connect your tools** in the app has the base URLs.
 
+## Your account
+
+**Account** (bottom of the sidebar) lets you change your name or password, sign out of every other device, leave a workspace, or delete your login. Changing your password signs out your other devices.
+
 ## FAQ
 
-**What can my admin see?** Time, model, token counts, which key and plan, and latency for each request. Prompt and response text aren't stored. The routing engine keeps the last few failed requests on the server for debugging.
+**What can my admin see?** Time, model, token counts, which key and plan, and latency for each request. Prompt and response text aren't stored. The routing engine keeps the last few failed requests on the server for debugging. Other members never see your private plans or your activity.
 
 **`401`?** Your key was revoked or mistyped. Create a new one.
 **`429 budget_exceeded`?** Your key's monthly budget is used up. Ask an admin.
