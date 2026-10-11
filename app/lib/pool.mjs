@@ -75,6 +75,7 @@ export class Pool {
     this.state = { lastPollAt: null, lastPollError: null, lastSyncAt: null, lastSyncError: null, ingested: 0 };
     this.oauthSessions = new Map();
     this.unclaimed = [];
+    this.completing = Promise.resolve(); // serializes OAuth completions
   }
 
   ws(id) {
@@ -156,8 +157,13 @@ export class Pool {
       const idx = f.auth_index;
       if (!idx) continue;
       const a = byIdx.get(idx);
-      if (!a || a.removed_at) {
-        if (!a) unclaimed.push({ auth_index: idx, provider: f.provider || f.type, email: f.email || f.account || f.name, name: f.name });
+      if (!a) {
+        unclaimed.push({ auth_index: idx, provider: f.provider || f.type, email: f.email || f.account || f.name, name: f.name });
+        continue;
+      }
+      if (a.removed_at) {
+        // A plan removed from its workspace must not keep serving traffic; retry the delete until the file is gone.
+        await this.cpa.deleteCredential(f.name).catch(() => {});
         continue;
       }
       const signals = f.quota && f.quota.signals ? lowerKeys(f.quota.signals) : null;
@@ -232,21 +238,38 @@ export class Pool {
     const s = this.session(state, workspaceId, userId);
     const st = await this.cpa.oauthStatus(state);
     if (st.status !== 'ok') return st;
+    // Completions are serialized so two sign-ins finishing together can't claim each other's file.
+    const run = this.completing.then(() => this.completeOAuth(state, s));
+    this.completing = run.catch(() => {});
+    return run;
+  }
+
+  async completeOAuth(state, s) {
+    if (!this.oauthSessions.has(state)) return { status: 'ok', added: [], refreshed: [], conflicts: [] };
     this.oauthSessions.delete(state);
     const files = await this.cpa.listCredentials();
-    const touched = files.filter((f) => f.auth_index && (!s.before.has(f.auth_index) || s.before.get(f.auth_index) !== String(f.modtime || f.updated_at || '')));
+    const stamp = (f) => String(f.modtime || f.updated_at || '');
+    const sameProvider = (f) => (f.provider || f.type) === (s.provider === 'claude' ? 'claude' : 'codex');
+    const fresh = files.filter((f) => f.auth_index && sameProvider(f) && !s.before.has(f.auth_index));
+    const modified = files.filter((f) => f.auth_index && sameProvider(f) && s.before.has(f.auth_index) && s.before.get(f.auth_index) !== stamp(f));
     const result = { status: 'ok', added: [], refreshed: [], conflicts: [] };
-    for (const f of touched) {
-      const existing = this.db.prepare('SELECT * FROM accounts WHERE auth_index = ?').get(f.auth_index);
-      const info = { email: f.email || f.account || f.name, provider: f.provider || f.type };
-      if (existing && !existing.removed_at && existing.workspace_id !== s.workspaceId) {
-        result.conflicts.push(info);
-        continue;
-      }
-      if (existing && !existing.removed_at) {
-        result.refreshed.push(info);
-        continue;
-      }
+    const info = (f) => ({ email: f.email || f.account || f.name, provider: f.provider || f.type });
+    const owned = (f) => this.db.prepare('SELECT * FROM accounts WHERE auth_index = ?').get(f.auth_index);
+
+    // Re-logins to plans that already belong somewhere are reported, never moved.
+    const candidates = [];
+    for (const f of [...fresh, ...modified]) {
+      const existing = owned(f);
+      if (existing && !existing.removed_at) (existing.workspace_id === s.workspaceId ? result.refreshed : result.conflicts).push(info(f));
+      else candidates.push(f);
+    }
+    // Another sign-in for the same provider was in flight: we can't tell whose file is whose.
+    const othersPending = [...this.oauthSessions.values()].some((o) => o.provider === s.provider);
+    if (candidates.length > 1 && othersPending) {
+      return { ...result, ambiguous: true, error: 'Another sign-in for the same provider finished at the same moment, so this one was not added. Please connect the plan again.' };
+    }
+    for (const f of candidates) {
+      const existing = owned(f);
       if (existing) {
         this.db
           .prepare(`UPDATE accounts SET workspace_id = ?, removed_at = NULL, visibility = ?, owner_user_id = ?, applied_prefix = NULL, applied_modtime = NULL, disabled = 0 WHERE id = ?`)
@@ -255,9 +278,9 @@ export class Pool {
         this.db
           .prepare(`INSERT INTO accounts (workspace_id, kind, role, provider, email, account_type, auth_index, cpa_name, visibility, owner_user_id, plan, created_at)
                     VALUES (?, 'oauth', 'subscription', ?, ?, ?, ?, ?, ?, ?, ?, ?)`)
-          .run(s.workspaceId, s.provider, info.email, f.account_type || null, f.auth_index, f.name, s.visibility, s.userId, guessPlan(s.provider, f.account_type), Date.now());
+          .run(s.workspaceId, s.provider, info(f).email, f.account_type || null, f.auth_index, f.name, s.visibility, s.userId, guessPlan(s.provider, f.account_type), Date.now());
       }
-      result.added.push(info);
+      result.added.push(info(f));
     }
     await this.syncOAuthAccounts();
     return result;

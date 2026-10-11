@@ -1,4 +1,8 @@
-import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
+import { createCipheriv, createDecipheriv, createHash, createHmac, randomBytes, scrypt, scryptSync, timingSafeEqual } from 'node:crypto';
+import { promisify } from 'node:util';
+
+const scryptAsync = promisify(scrypt);
+const SCRYPT = { N: 16384, r: 8, p: 1 };
 
 export const sha256 = (s) => createHash('sha256').update(String(s)).digest('hex');
 
@@ -10,18 +14,25 @@ export function randomToken(len = 32) {
   return out;
 }
 
-export function hashPassword(pw) {
+// Password hashing runs off the event loop so a login burst can't stall streaming requests.
+export async function hashPassword(pw) {
   const salt = randomBytes(16);
-  const hash = scryptSync(String(pw), salt, 32, { N: 16384, r: 8, p: 1 });
+  const hash = await scryptAsync(String(pw), salt, 32, SCRYPT);
   return `scrypt$${salt.toString('base64')}$${hash.toString('base64')}`;
 }
 
-export function verifyPassword(pw, stored) {
+export async function verifyPassword(pw, stored) {
   const [alg, saltB64, hashB64] = String(stored || '').split('$');
   if (alg !== 'scrypt' || !saltB64 || !hashB64) return false;
   const want = Buffer.from(hashB64, 'base64');
-  const got = scryptSync(String(pw), Buffer.from(saltB64, 'base64'), want.length, { N: 16384, r: 8, p: 1 });
+  const got = await scryptAsync(String(pw), Buffer.from(saltB64, 'base64'), want.length, SCRYPT);
   return timingSafeEqual(want, got);
+}
+
+// Synchronous variants for tests and scripts.
+export function hashPasswordSync(pw) {
+  const salt = randomBytes(16);
+  return `scrypt$${salt.toString('base64')}$${scryptSync(String(pw), salt, 32, SCRYPT).toString('base64')}`;
 }
 
 export function makeSigner(secret) {

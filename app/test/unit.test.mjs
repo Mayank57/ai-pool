@@ -5,7 +5,9 @@ import { DEFAULT_PRICES, resolvePrice, costOf } from '../lib/pricing.mjs';
 import { tokensOf, quotaFromHeaders, accountPrefix, guessPlan } from '../lib/pool.mjs';
 import { windowsFromQuota, accountMonthly } from '../lib/reports.mjs';
 import { providerForModel } from '../lib/gateway.mjs';
-import { hashPassword, verifyPassword, makeSigner, makeCrypto, randomToken } from '../lib/security.mjs';
+import { hashPassword, verifyPassword, hashPasswordSync, makeSigner, makeCrypto, randomToken } from '../lib/security.mjs';
+import { openDb, tx } from '../lib/db.mjs';
+import { Limiter } from '../lib/limits.mjs';
 
 test('price resolution: longest prefix, suffixes, provider fallback', () => {
   assert.equal(resolvePrice('claude-opus-5-5', 'claude', DEFAULT_PRICES).key, 'claude-opus-5-5');
@@ -65,10 +67,12 @@ test('routing prefixes and helpers', () => {
   assert.equal(accountMonthly({ kind: 'apikey', role: 'overflow' }, plans), 0);
 });
 
-test('passwords, signed sessions and encryption', () => {
-  const h = hashPassword('correct horse');
-  assert.ok(verifyPassword('correct horse', h));
-  assert.ok(!verifyPassword('wrong', h));
+test('passwords, signed sessions and encryption', async () => {
+  const h = await hashPassword('correct horse');
+  assert.ok(await verifyPassword('correct horse', h));
+  assert.ok(!(await verifyPassword('wrong', h)));
+  assert.ok(await verifyPassword('sync', hashPasswordSync('sync')));
+  assert.equal(await verifyPassword('x', 'garbage'), false);
   const s = makeSigner('secret');
   const tok = s.sign({ uid: 7, exp: Date.now() + 1000 });
   assert.equal(s.verify(tok).uid, 7);
@@ -81,4 +85,35 @@ test('passwords, signed sessions and encryption', () => {
   assert.equal(c.decrypt(blob), 'sk-ant-123');
   assert.throws(() => makeCrypto('other').decrypt(blob));
   assert.match(randomToken(40), /^[A-Za-z0-9]{40}$/);
+});
+
+test('nested transactions roll back as a unit', () => {
+  const db = openDb(':memory:');
+  db.exec('CREATE TABLE t (v INTEGER)');
+  assert.throws(() =>
+    tx(db, () => {
+      db.prepare('INSERT INTO t VALUES (1)').run();
+      tx(db, () => db.prepare('INSERT INTO t VALUES (2)').run());
+      throw new Error('boom');
+    }),
+  );
+  assert.equal(db.prepare('SELECT COUNT(*) AS n FROM t').get().n, 0);
+  tx(db, () => {
+    db.prepare('INSERT INTO t VALUES (1)').run();
+    assert.throws(() => tx(db, () => { db.prepare('INSERT INTO t VALUES (2)').run(); throw new Error('inner'); }));
+  });
+  assert.deepEqual(db.prepare('SELECT v FROM t').all().map((r) => r.v), [1]);
+});
+
+test('limiter counts attempts per window and prunes', () => {
+  const l = new Limiter();
+  for (let i = 0; i < 3; i++) assert.equal(l.hit('k', 3, 1000), true);
+  assert.equal(l.hit('k', 3, 1000), false);
+  assert.equal(l.allowed('k', 3, 1000), false);
+  l.reset('k');
+  assert.equal(l.allowed('k', 3, 1000), true);
+  l.buckets.set('old', { since: Date.now() - 5000, count: 9, windowMs: 1000 });
+  l.prune();
+  assert.equal(l.buckets.has('old'), false);
+  clearInterval(l.timer);
 });

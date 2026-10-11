@@ -138,7 +138,14 @@ export function openDb(path) {
   const db = new DatabaseSync(path);
   db.exec('PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON;');
   db.exec(SCHEMA);
+  migrate(db);
   return db;
+}
+
+// Additive schema changes for databases created by earlier versions.
+function migrate(db) {
+  const cols = (table) => new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((c) => c.name));
+  if (!cols('users').has('pw_version')) db.exec('ALTER TABLE users ADD COLUMN pw_version INTEGER NOT NULL DEFAULT 0');
 }
 
 export function getSetting(db, scope, key, fallback) {
@@ -157,14 +164,21 @@ export function setSetting(db, scope, key, value) {
   ).run(scope, key, JSON.stringify(value));
 }
 
+// Runs fn inside a transaction. Nested calls join the outer transaction via savepoints.
+const depth = new WeakMap();
 export function tx(db, fn) {
-  db.exec('BEGIN');
+  const d = depth.get(db) || 0;
+  depth.set(db, d + 1);
+  const name = `sp${d}`;
+  db.exec(d === 0 ? 'BEGIN' : `SAVEPOINT ${name}`);
   try {
     const out = fn();
-    db.exec('COMMIT');
+    db.exec(d === 0 ? 'COMMIT' : `RELEASE ${name}`);
     return out;
   } catch (err) {
-    db.exec('ROLLBACK');
+    db.exec(d === 0 ? 'ROLLBACK' : `ROLLBACK TO ${name}; RELEASE ${name}`);
     throw err;
+  } finally {
+    depth.set(db, d);
   }
 }

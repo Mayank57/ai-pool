@@ -6,8 +6,14 @@ import https from 'node:https';
 import { sha256 } from './security.mjs';
 import { accountPrefix } from './pool.mjs';
 
-const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length']);
-const MAX_BODY = 64 * 1024 * 1024;
+// Hop-by-hop and connection-level headers are never forwarded in either direction.
+const HOP = new Set(['connection', 'keep-alive', 'proxy-authenticate', 'proxy-authorization', 'te', 'trailer', 'transfer-encoding', 'upgrade', 'host', 'content-length', 'expect']);
+const MAX_BODY = 32 * 1024 * 1024;
+
+// Only endpoints that pick an upstream plan by model name are exposed. The
+// proxy also serves realtime, media and search routes that bypass prefix
+// isolation, so everything else is refused here.
+const ROUTES = new Set(['POST /v1/messages', 'POST /v1/messages/count_tokens', 'POST /v1/chat/completions', 'POST /v1/completions', 'POST /v1/responses', 'POST /v1/responses/compact', 'GET /v1/models']);
 
 export function providerForModel(model) {
   const m = String(model || '').toLowerCase();
@@ -28,6 +34,7 @@ function extractKey(req) {
 }
 
 function sendError(res, path, status, type, message) {
+  if (res.destroyed || res.writableEnded) return;
   if (res.headersSent) return res.end();
   res.writeHead(status, { 'Content-Type': 'application/json' });
   if (path.startsWith('/v1/messages')) res.end(JSON.stringify({ type: 'error', error: { type, message } }));
@@ -50,7 +57,7 @@ export function createGateway({ db, cpaUrl }) {
   const agent = target.protocol === 'https:' ? https : http;
 
   function lookupKey(raw) {
-    if (!raw) return null;
+    if (!raw || !raw.startsWith('aip_') || raw.length > 128) return null;
     return db
       .prepare(
         `SELECT k.*, w.prefix AS ws_prefix, w.billing_status, w.trial_ends_at, w.name AS ws_name
@@ -117,9 +124,19 @@ export function createGateway({ db, cpaUrl }) {
     return status >= 400 && status < 500 && /unknown provider|no available|model_not_found|auth_unavailable|cooling/i.test(text);
   }
 
+  function pickHeaders(h) {
+    const out = {};
+    for (const [k, v] of Object.entries(h)) {
+      const lk = k.toLowerCase();
+      if (HOP.has(lk) || lk === 'authorization' || lk === 'x-api-key' || lk === 'cookie') continue;
+      out[lk] = v;
+    }
+    return out;
+  }
+
   // The proxy's Anthropic-format model list doesn't handle routing prefixes,
   // so always fetch the OpenAI-format list and convert when needed.
-  async function handleModels(req, res, key, search) {
+  async function handleModels(req, res, key) {
     const headers = {};
     for (const [k, v] of Object.entries(pickHeaders(req.headers))) if (!k.startsWith('anthropic-')) headers[k] = v;
     headers.authorization = `Bearer ${key.cpa_key}`;
@@ -129,8 +146,7 @@ export function createGateway({ db, cpaUrl }) {
     try {
       data = JSON.parse(raw.toString());
     } catch {
-      res.writeHead(upstream.statusCode, { 'Content-Type': 'application/json' });
-      return res.end(raw);
+      return sendError(res, '/v1/models', 502, 'api_error', 'The routing engine returned an unreadable model list.');
     }
     const prefixes = [...new Set([...prefixesFor(key, 'claude'), ...prefixesFor(key, 'codex')])].map((p) => p + '/');
     const seen = new Set();
@@ -145,24 +161,22 @@ export function createGateway({ db, cpaUrl }) {
     } else {
       out = { object: 'list', data: models };
     }
-    res.writeHead(upstream.statusCode, { 'Content-Type': 'application/json' });
+    res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(out));
   }
 
-  function pickHeaders(h) {
-    const out = {};
-    for (const [k, v] of Object.entries(h)) {
-      const lk = k.toLowerCase();
-      if (HOP.has(lk) || lk === 'authorization' || lk === 'x-api-key' || lk === 'cookie') continue;
-      out[lk] = v;
-    }
-    return out;
+  function pipe(upstream, res) {
+    res.writeHead(upstream.statusCode, filterResponseHeaders(upstream.headers));
+    upstream.on('error', () => res.destroy());
+    upstream.pipe(res);
   }
 
   return async function handle(req, res, url) {
     const path = url.pathname;
-    const raw = extractKey(req);
-    const key = lookupKey(raw);
+    if (!ROUTES.has(`${req.method} ${path}`)) {
+      return sendError(res, path, 404, 'not_found_error', `AI Pool does not serve ${req.method} ${path}. Supported: messages, chat/completions, responses, models.`);
+    }
+    const key = lookupKey(extractKey(req));
     if (!key) return sendError(res, path, 401, 'authentication_error', 'Invalid or revoked AI Pool key.');
     if (key.billing_status === 'canceled' || (key.billing_status === 'trialing' && Date.now() > key.trial_ends_at))
       return sendError(res, path, 402, 'billing_error', `The free trial for workspace "${key.ws_name}" has ended. A workspace owner can activate billing in AI Pool → Billing.`);
@@ -170,9 +184,9 @@ export function createGateway({ db, cpaUrl }) {
     if (over) return sendError(res, path, 429, 'budget_exceeded', over);
 
     try {
-      if (req.method === 'GET' && path === '/v1/models') return await handleModels(req, res, key, url.search);
+      if (req.method === 'GET') return await handleModels(req, res, key);
 
-      let body = await readBody(req);
+      const body = await readBody(req);
       let json = null;
       if (body.length && String(req.headers['content-type'] || '').includes('json')) {
         try {
@@ -197,12 +211,10 @@ export function createGateway({ db, cpaUrl }) {
           res.writeHead(upstream.statusCode, filterResponseHeaders(upstream.headers));
           return res.end(text);
         }
-        res.writeHead(upstream.statusCode, filterResponseHeaders(upstream.headers));
-        upstream.pipe(res);
-        return;
+        return pipe(upstream, res);
       }
     } catch (err) {
-      return sendError(res, path, err.status || 502, 'api_error', err.status ? err.message : `Upstream error: ${err.message}`);
+      return sendError(res, path, err.status || 502, 'api_error', err.status ? err.message : 'AI Pool could not reach its routing engine. Try again in a moment.');
     }
   };
 }
