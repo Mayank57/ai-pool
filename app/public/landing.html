@@ -1,0 +1,162 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Pool</title>
+  <meta name="description" content="Pool your team's Claude and ChatGPT plans behind one endpoint. Scoped keys, budgets, failover, and a savings dashboard." />
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <nav class="site-nav"><div class="inner">
+    <a class="logo" href="./"><span class="mark"></span>AI Pool</a>
+    <a class="nav hide-sm" href="#how">How it works</a>
+    <a class="nav" href="pricing">Pricing</a>
+    <a class="nav hide-sm" href="docs">Docs</a>
+    <span class="spacer"></span>
+    <a class="nav" href="login" id="nav-login">Log in</a>
+    <a class="btn primary" href="signup" id="nav-cta">Start free</a>
+  </div></nav>
+
+  <header class="wrap hero">
+    <div>
+      <div class="eyebrow">For teams on Claude &amp; ChatGPT</div>
+      <h1 class="display">One pool for every AI plan your team pays for.</h1>
+      <p class="lede">Connect the Claude and ChatGPT plans you already have. Give everyone a personal key. AI Pool spreads work across your plans, fails over when one hits its limit, and shows what every seat is actually worth.</p>
+      <div class="row" style="margin-top:26px">
+        <a class="btn primary lg" href="signup">Start your 7-day trial</a>
+        <a class="btn lg" href="#how">See how it works</a>
+      </div>
+      <div class="logos"><span>Claude Code</span><span>Codex CLI</span><span>OpenCode</span><span>Cursor</span><span>Any OpenAI / Anthropic SDK</span></div>
+    </div>
+    <div class="terminal" aria-label="Example terminal session">
+      <div class="dots"><i></i><i></i><i></i></div>
+      <div><span class="c">$</span> curl -fsSL <span class="b">ai.acme.com/setup.sh</span> | sh</div>
+      <div class="c">Paste your AI Pool key: ••••••••••••</div>
+      <div class="g">✓ Key works</div>
+      <div class="g">✓ Claude Code configured</div>
+      <div class="g">✓ Codex configured</div>
+      <div style="margin-top:8px"><span class="c">$</span> claude</div>
+      <div class="c">› routed via AI Pool · 3 Claude plans · 2 ChatGPT plans</div>
+    </div>
+  </header>
+
+  <section class="band alt" id="how">
+    <div class="wrap">
+      <div class="eyebrow">How it works</div>
+      <h2 class="section">Set up in minutes. Nobody changes how they work.</h2>
+      <div class="steps3">
+        <div class="card step-card"><div class="n">1</div><h3>Connect your plans</h3><p class="ink2">Sign in to each Claude Pro/Max or ChatGPT Plus/Pro/Business plan once. The plans stay in your name, and you keep paying each provider directly.</p></div>
+        <div class="card step-card"><div class="n">2</div><h3>Hand out keys</h3><p class="ink2">Create a key per person, team, project or client. Each key has its own budget, and you can revoke it instantly.</p></div>
+        <div class="card step-card"><div class="n">3</div><h3>Keep your tools</h3><p class="ink2">One setup script points Claude Code and Codex at the pool. Other tools need only a base URL and a key.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap">
+      <div class="eyebrow">Build your pool</div>
+      <h2 class="section">Buy capacity for your usage, not your headcount.</h2>
+      <p class="lede">Most seats sit idle most of the day. Pool them, and a few heavy plans cover a whole team. Try your own numbers.</p>
+      <div class="builder">
+        <div class="card" id="builder">
+          <div class="stepper-row"><div class="name">Team members</div><div class="stepper" data-k="people"><button aria-label="fewer">−</button><output>10</output><button aria-label="more">+</button></div></div>
+          <div class="stepper-row"><div class="name">Claude Pro <span class="muted small">$20/mo · 1× capacity</span></div><div class="stepper" data-k="cpro"><button aria-label="fewer">−</button><output>0</output><button aria-label="more">+</button></div></div>
+          <div class="stepper-row"><div class="name">Claude Max 5x <span class="muted small">$100/mo · 5×</span></div><div class="stepper" data-k="cmax5"><button aria-label="fewer">−</button><output>2</output><button aria-label="more">+</button></div></div>
+          <div class="stepper-row"><div class="name">Claude Max 20x <span class="muted small">$200/mo · 20×</span></div><div class="stepper" data-k="cmax20"><button aria-label="fewer">−</button><output>1</output><button aria-label="more">+</button></div></div>
+          <div class="stepper-row"><div class="name">ChatGPT Plus <span class="muted small">$20/mo</span></div><div class="stepper" data-k="gplus"><button aria-label="fewer">−</button><output>2</output><button aria-label="more">+</button></div></div>
+          <div class="stepper-row"><div class="name">ChatGPT Pro <span class="muted small">$200/mo</span></div><div class="stepper" data-k="gpro"><button aria-label="fewer">−</button><output>0</output><button aria-label="more">+</button></div></div>
+        </div>
+        <div class="card">
+          <div class="muted small">Pooled Claude capacity</div>
+          <div class="big-number" id="b-cap">—</div>
+          <div class="ink2 small" id="b-cap-foot"></div>
+          <hr style="border:0;border-top:1px solid var(--grid);margin:16px 0" />
+          <div class="row"><span class="ink2">Plans you pay providers</span><span class="spacer"></span><b id="b-plans">—</b></div>
+          <div class="row" style="margin-top:6px"><span class="ink2">AI Pool ($20 per plan)</span><span class="spacer"></span><b id="b-fee">—</b></div>
+          <div class="row" style="margin-top:6px"><span class="ink2">Total per month</span><span class="spacer"></span><b id="b-total">—</b></div>
+          <div class="row" style="margin-top:14px"><span class="ink2">vs. a Max 5x + ChatGPT Plus seat each</span><span class="spacer"></span><b id="b-seats">—</b></div>
+          <p class="muted small" style="margin-top:14px">Capacity multiples follow Anthropic's plan names (Max 5x = 5× Pro usage). ChatGPT limits aren't published as multiples, so they aren't added here.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band alt">
+    <div class="wrap">
+      <div class="eyebrow">Features</div>
+      <h2 class="section">Everything you need to run shared AI capacity.</h2>
+      <div class="feature-grid">
+        <div class="card"><h3>Capacity-aware routing</h3><p>Requests go to plans with headroom. When one hits its 5-hour or weekly limit, traffic moves to the next one automatically.</p></div>
+        <div class="card"><h3>Bring your own plan</h3><p>Already have Claude or ChatGPT? Connect it as <b>private</b> to use it first yourself and fall back to the team pool. Or <b>share</b> it with everyone.</p></div>
+        <div class="card"><h3>Scoped keys &amp; budgets</h3><p>Keys for people, teams, projects or clients, each with an optional monthly dollar or token budget. Revoke any key in one click.</p></div>
+        <div class="card"><h3>Capacity &amp; resets</h3><p>See each plan's 5-hour and weekly usage, when it resets, and how much capacity will expire unused.</p></div>
+        <div class="card"><h3>Savings you can show</h3><p>Every request is valued at API list prices. Compare that with what you pay, per person, key, model and plan.</p></div>
+        <div class="card"><h3>Metered overflow</h3><p>Add an Anthropic or OpenAI API key as a last resort. It's only used when every plan is at its limit.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="band">
+    <div class="wrap" style="max-width:820px">
+      <div class="eyebrow">FAQ</div>
+      <h2 class="section">Questions teams ask first</h2>
+      <details class="faq"><summary>Is pooling subscriptions allowed by Anthropic and OpenAI?</summary><p>Consumer plans (Claude Pro/Max, ChatGPT Plus/Pro) are licensed to one person, and sharing one person's plan with others can break the provider's terms. The safe pattern is <b>private</b> mode: each person connects their own company-paid plan and uses it themselves, while AI Pool handles keys, budgets and reporting. Business plans and API keys (as overflow) are the sanctioned routes for shared capacity. Check your plans' terms before sharing.</p></details>
+      <details class="faq"><summary>Where are our credentials stored?</summary><p>On the machine running AI Pool. In this build that's your own computer or server; requests go only to Anthropic and OpenAI. Upstream API keys are encrypted at rest. Plan sign-ins are stored by the routing engine on the same machine.</p></details>
+      <details class="faq"><summary>What happens when every plan hits its limit?</summary><p>Requests fail with a rate-limit error until a window resets, unless you added an overflow API key. Then AI Pool switches to it and bills per token at the provider's price.</p></details>
+      <details class="faq"><summary>Does anyone have to change tools?</summary><p>No. Claude Code, Codex, OpenCode, Cursor and any OpenAI- or Anthropic-compatible client work by changing the base URL and key. The setup script does it for Claude Code and Codex.</p></details>
+      <details class="faq"><summary>Can admins read our prompts?</summary><p>AI Pool's dashboards are built from metadata only: time, model, token counts, which key and plan, and latency. Prompt and response text isn't stored, except the routing engine keeps the last few <i>failed</i> requests on the server for debugging.</p></details>
+    </div>
+  </section>
+
+  <section class="band alt">
+    <div class="wrap" style="text-align:center">
+      <h2 class="section">Put the plans you already pay for to work.</h2>
+      <p class="lede" style="margin:0 auto 22px">Free for 7 days. No card needed.</p>
+      <a class="btn primary lg" href="signup">Create your workspace</a>
+    </div>
+  </section>
+
+  <footer class="site"><div class="wrap row">
+    <span class="logo" style="font-size:14px"><span class="mark" style="width:18px;height:18px"></span>AI Pool</span>
+    <span class="spacer"></span>
+    <a href="pricing">Pricing</a><a href="docs">Docs</a><a href="login">Log in</a>
+  </div></footer>
+
+  <script type="module">
+    import { api } from './common.js';
+    // Signed-in visitors go straight to their workspace.
+    api('/api/me').then(() => {
+      document.getElementById('nav-login').classList.add('hidden');
+      const cta = document.getElementById('nav-cta');
+      cta.textContent = 'Open app';
+      cta.href = 'app';
+    }).catch(() => {});
+
+    const state = { people: 10, cpro: 0, cmax5: 2, cmax20: 1, gplus: 2, gpro: 0 };
+    const price = { cpro: 20, cmax5: 100, cmax20: 200, gplus: 20, gpro: 200 };
+    const fmt = (n) => '$' + Math.round(n).toLocaleString();
+    function render() {
+      document.querySelectorAll('.stepper').forEach((s) => (s.querySelector('output').value = state[s.dataset.k]));
+      const cap = state.cpro + state.cmax5 * 5 + state.cmax20 * 20;
+      const plans = state.cpro + state.cmax5 + state.cmax20 + state.gplus + state.gpro;
+      const spend = Object.keys(price).reduce((s, k) => s + price[k] * state[k], 0);
+      const fee = plans * 20;
+      const seats = state.people * 120;
+      document.getElementById('b-cap').textContent = cap ? `${cap}× Pro` : '—';
+      document.getElementById('b-cap-foot').textContent = state.people ? `≈ ${(cap / state.people).toFixed(1)}× a Pro plan per person, shared` : '';
+      document.getElementById('b-plans').textContent = fmt(spend);
+      document.getElementById('b-fee').textContent = fmt(fee);
+      document.getElementById('b-total').textContent = fmt(spend + fee);
+      const diff = seats - (spend + fee);
+      document.getElementById('b-seats').textContent = diff >= 0 ? `save ${fmt(diff)}/mo` : `${fmt(-diff)}/mo more`;
+    }
+    document.querySelectorAll('.stepper').forEach((s) => {
+      const [minus, plus] = s.querySelectorAll('button');
+      minus.onclick = () => { state[s.dataset.k] = Math.max(s.dataset.k === 'people' ? 1 : 0, state[s.dataset.k] - 1); render(); };
+      plus.onclick = () => { state[s.dataset.k] = Math.min(200, state[s.dataset.k] + 1); render(); };
+    });
+    render();
+  </script>
+</body>
+</html>

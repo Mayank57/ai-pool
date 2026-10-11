@@ -1,0 +1,60 @@
+# AI Pool on one server: routing engine (CLIProxyAPI) + AI Pool app.
+#
+#   scripts/setup.sh --mode docker --url https://ai.acme.com
+#   docker compose -f deploy/docker-compose.yml --env-file .env up -d
+#
+# Ports
+#   8320          AI Pool: website, app and the /v1 endpoint employees' tools use
+#   54545 / 1455  OAuth callbacks (only used when signing in from a browser on the server itself)
+# The routing engine (8317) is not published; only AI Pool talks to it.
+# Beyond a trusted LAN, use the "caddy" profile for HTTPS (set APP_DOMAIN in .env).
+
+services:
+  proxy:
+    image: ${CLI_PROXY_IMAGE:-eceasy/cli-proxy-api:latest}
+    container_name: ai-pool-proxy
+    restart: unless-stopped
+    ports:
+      - "${APP_PORT:-8320}:8320" # served by the app, which shares this network namespace
+      - "54545:54545"
+      - "1455:1455"
+    volumes:
+      - ../proxy/config.yaml:/CLIProxyAPI/config.yaml
+      - ../proxy/auths:/root/.cli-proxy-api
+
+  app:
+    build: ../app
+    container_name: ai-pool-app
+    restart: unless-stopped
+    # Shares the proxy's network so the management API stays on 127.0.0.1.
+    network_mode: "service:proxy"
+    depends_on: [proxy]
+    environment:
+      APP_HOST: 0.0.0.0
+      APP_PORT: 8320
+      APP_PUBLIC_URL: ${APP_PUBLIC_URL:?run scripts/setup.sh first}
+      APP_SECRET: ${APP_SECRET:?run scripts/setup.sh first}
+      MANAGEMENT_KEY: ${MANAGEMENT_KEY:?run scripts/setup.sh first}
+      PROXY_URL: http://127.0.0.1:8317
+      APP_DB: /data/aipool.db
+      AIPOOL_ENV_FILE: /nonexistent
+      ALLOW_CLAIM_UNASSIGNED: ${ALLOW_CLAIM_UNASSIGNED:-false}
+    volumes:
+      - app-data:/data
+
+  caddy:
+    profiles: ["caddy"]
+    image: caddy:2
+    container_name: ai-pool-caddy
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    depends_on: [proxy]
+    environment:
+      APP_DOMAIN: ${APP_DOMAIN:-}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+
+volumes:
+  app-data:
+  caddy-data:

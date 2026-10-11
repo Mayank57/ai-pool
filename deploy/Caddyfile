@@ -1,0 +1,8 @@
+# Automatic HTTPS for AI Pool. Point APP_DOMAIN's DNS at this server first, then:
+#   docker compose -f deploy/docker-compose.yml --env-file .env --profile caddy up -d
+{$APP_DOMAIN} {
+	# Streaming responses must not be buffered.
+	reverse_proxy proxy:8320 {
+		flush_interval -1
+	}
+}

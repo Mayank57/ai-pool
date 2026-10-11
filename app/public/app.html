@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Pool</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="logo" href="./"><span class="mark"></span>AI Pool</a>
+      <select class="ws-switch" id="ws-switch" aria-label="Workspace"></select>
+      <nav id="nav"></nav>
+      <div class="me" id="me"></div>
+    </aside>
+    <div class="main">
+      <div id="banner"></div>
+      <nav class="mobile-nav" id="mnav"></nav>
+      <div class="topbar">
+        <h1 id="page-title">Overview</h1>
+        <span class="spacer"></span>
+        <div class="seg hidden" id="range">
+          <button data-r="24h">24h</button><button data-r="7d">7d</button><button data-r="30d">30d</button><button data-r="mtd">MTD</button><button data-r="90d">90d</button>
+        </div>
+      </div>
+      <div class="content" id="content"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+  <dialog id="modal"></dialog>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AI Pool Docs</title>
+  <link rel="stylesheet" href="style.css" />
+  <style>
+    .docs { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 40px; padding: 40px 0 80px; }
+    .docs nav { position: sticky; top: 72px; align-self: start; display: grid; gap: 6px; font-size: 13.5px; }
+    .docs nav a { color: var(--ink-2); }
+    .docs h2 { font-size: 22px; margin: 40px 0 8px; padding-top: 8px; }
+    .docs h2:first-child { margin-top: 0; }
+    .docs h3 { font-size: 15px; margin: 22px 0 6px; }
+    .docs p, .docs li { color: var(--ink-2); max-width: 720px; }
+    @media (max-width: 760px) { .docs { grid-template-columns: 1fr; } .docs nav { position: static; } }
+  </style>
+</head>
+<body>
+  <nav class="site-nav"><div class="inner">
+    <a class="logo" href="./"><span class="mark"></span>AI Pool</a>
+    <a class="nav" href="pricing">Pricing</a>
+    <a class="nav" href="docs">Docs</a>
+    <span class="spacer"></span>
+    <a class="nav" href="login">Log in</a>
+    <a class="btn primary" href="signup">Start free</a>
+  </div></nav>
+  <div class="wrap docs">
+    <nav>
+      <a href="#overview">Overview</a>
+      <a href="#admins">For admins</a>
+      <a href="#members">For members</a>
+      <a href="#tools">Configure your tools</a>
+      <a href="#private">Private vs shared plans</a>
+      <a href="#keys">Keys &amp; budgets</a>
+      <a href="#capacity">Capacity &amp; overflow</a>
+      <a href="#troubleshooting">Troubleshooting</a>
+    </nav>
+    <main>
+      <h2 id="overview">Overview</h2>
+      <p>AI Pool gives your workspace one endpoint, <code class="base"></code>, that speaks the Anthropic and OpenAI APIs. Requests made with an AI Pool key are routed to the Claude or ChatGPT plans connected to your workspace, never to another workspace's plans.</p>
+
+      <h2 id="admins">For admins</h2>
+      <ol>
+        <li><b>Sign up</b> and name your workspace. The 7-day trial starts now.</li>
+        <li><b>Plans → Connect Claude plan / Connect ChatGPT plan.</b> Sign in to the provider in the window that opens. Set the plan type (Pro, Max 5x…) so savings are calculated correctly.</li>
+        <li><b>Keys → Create key.</b> Pick a scope (person, team, project or client) and an optional monthly budget. The key is shown <b>once</b>. Use <i>Test key</i> to send a real request.</li>
+        <li><b>Members → Invite.</b> Copy the invite link to each teammate. Links expire after 14 days.</li>
+        <li><b>Billing → Activate</b> before the trial ends (simulated in this build).</li>
+      </ol>
+
+      <h2 id="members">For members</h2>
+      <ol>
+        <li>Open the invite link, create your login (or log in), and you're in the workspace.</li>
+        <li><i>Optional:</i> if you already pay for Claude or ChatGPT, connect it under <b>Plans</b>. Choose <b>Private</b> to keep it for yourself or <b>Shared</b> to add it to the team pool.</li>
+        <li><b>Keys → Create key</b>, copy it, then run the setup script below.</li>
+      </ol>
+
+      <h2 id="tools">Configure your tools</h2>
+      <h3>One-line setup (Claude Code, Codex)</h3>
+      <pre class="code setup-cmd"></pre>
+      <p>The script asks for your key (it's never put in a URL), checks it works, backs up your existing config, and configures the tools it finds.</p>
+      <h3>Claude Code (manual)</h3>
+      <p>Add to <code>~/.claude/settings.json</code>:</p>
+      <pre class="code claude-json"></pre>
+      <p>If Claude Code was signed in to a personal account, run <code>/logout</code> once so it uses your AI Pool key.</p>
+      <h3>Codex CLI (manual)</h3>
+      <p>Add to <code>~/.codex/config.toml</code>, then <code>export AIPOOL_API_KEY="aip_…"</code> in your shell profile:</p>
+      <pre class="code codex-toml"></pre>
+      <h3>Anything else</h3>
+      <p>OpenAI-compatible clients: base URL <code class="base-v1"></code>. Anthropic-compatible clients: base URL <code class="base"></code>. Use your AI Pool key as the API key.</p>
+
+      <h2 id="private">Private vs shared plans</h2>
+      <p><b>Shared</b> plans serve everyone in the workspace. <b>Private</b> plans serve only the person who connected them. Their requests use the private plan first and fall back to the shared pool when it's rate-limited or doesn't offer the model. Admins see every plan; members see shared plans and their own.</p>
+
+      <h2 id="keys">Keys &amp; budgets</h2>
+      <p>Keys can belong to a person (usage is attributed to them) or to a team, project or client. Admins can set a monthly dollar budget, valued at API list prices, and/or a token budget. When a key reaches its budget, requests return <code>429 budget_exceeded</code> until the next calendar month or until an admin raises it. Usage is counted within a few seconds, so a burst can go slightly over.</p>
+
+      <h2 id="capacity">Capacity &amp; overflow</h2>
+      <p>Each response from Claude and ChatGPT plans reports how much of the 5-hour and weekly allowance is used and when it resets. The <b>Capacity</b> page shows this per plan once traffic has gone through it. An <b>overflow API key</b> (Anthropic or OpenAI) is used only when no plan has capacity; its usage is billed by the provider per token.</p>
+
+      <h2 id="troubleshooting">Troubleshooting</h2>
+      <ul>
+        <li><code>401</code>: the key is wrong or revoked. Create a new one under Keys.</li>
+        <li><code>402</code>: the workspace trial ended. The owner can activate it under Billing.</li>
+        <li><code>429 budget_exceeded</code>: the key's monthly budget is used up.</li>
+        <li><code>429</code> from the provider: every plan for that model is at its limit. Wait for a reset, or add plans or an overflow key.</li>
+        <li><code>unknown provider for model</code>: no plan in your workspace offers that model, e.g. a GPT model with only Claude plans connected.</li>
+      </ul>
+    </main>
+  </div>
+  <script>
+    const base = location.origin;
+    document.querySelectorAll('code.base').forEach((e) => (e.textContent = base));
+    document.querySelectorAll('code.base-v1').forEach((e) => (e.textContent = base + '/v1'));
+    document.querySelector('.setup-cmd').textContent = `curl -fsSL ${base}/setup.sh | sh`;
+    document.querySelector('.claude-json').textContent = JSON.stringify({ env: { ANTHROPIC_BASE_URL: base, ANTHROPIC_AUTH_TOKEN: 'aip_…' } }, null, 2);
+    document.querySelector('.codex-toml').textContent = `model_provider = "aipool"\n\n[model_providers.aipool]\nname = "AI Pool"\nbase_url = "${base}/v1"\nenv_key = "AIPOOL_API_KEY"\nwire_api = "responses"`;
+  </script>
+</body>
+</html>
